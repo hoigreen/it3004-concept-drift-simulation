@@ -1,0 +1,39 @@
+{
+  "rows": 47736,
+  "cols": 44,
+  "label_col": "label",
+  "attack_type_col": "attack_type",
+  "label_distribution": {
+    "1": 24576,
+    "0": 23160
+  },
+  "top_attack_types": {
+    "normal": 23160,
+    "neptune": 12939,
+    "satan": 1426,
+    "guess_passwd": 1241,
+    "smurf": 1194,
+    "mscan": 996,
+    "warezmaster": 951,
+    "ipsweep": 851,
+    "portsweep": 744,
+    "apache2": 737,
+    "processtable": 685,
+    "back": 555,
+    "nmap": 374,
+    "snmpguess": 331,
+    "saint": 319
+  },
+  "missing_ratio_top10": {
+    "f1": 0.0,
+    "f2": 0.0,
+    "f3": 0.0,
+    "f4": 0.0,
+    "f5": 0.0,
+    "f6": 0.0,
+    "f7": 0.0,
+    "f8": 0.0,
+    "f9": 0.0,
+    "f10": 0.0
+  }
+}

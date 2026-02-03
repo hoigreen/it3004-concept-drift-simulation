@@ -1,0 +1,39 @@
+{
+  "rows": 300000,
+  "cols": 80,
+  "label_col": "label",
+  "attack_type_col": "attack_type",
+  "label_distribution": {
+    "0": 240132,
+    "1": 59868
+  },
+  "top_attack_types": {
+    "Benign": 240132,
+    "DDoS attacks-LOIC-HTTP": 25879,
+    "DDOS attack-HOIC": 8929,
+    "DoS attacks-Hulk": 6542,
+    "Bot": 6477,
+    "Infilteration": 5232,
+    "SSH-Bruteforce": 4262,
+    "DoS attacks-GoldenEye": 1979,
+    "DoS attacks-Slowloris": 435,
+    "DDOS attack-LOIC-UDP": 87,
+    "Brute Force -Web": 29,
+    "Brute Force -XSS": 7,
+    "SQL Injection": 4,
+    "DoS attacks-SlowHTTPTest": 3,
+    "FTP-BruteForce": 3
+  },
+  "missing_ratio_top10": {
+    "Protocol": 0.0,
+    "Flow Duration": 0.0,
+    "Total Fwd Packets": 0.0,
+    "Total Backward Packets": 0.0,
+    "Fwd Packets Length Total": 0.0,
+    "Bwd Packets Length Total": 0.0,
+    "Fwd Packet Length Max": 0.0,
+    "Fwd Packet Length Min": 0.0,
+    "Fwd Packet Length Mean": 0.0,
+    "Fwd Packet Length Std": 0.0
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "rows": 2540047,
+  "cols": 49,
+  "label_col": "label",
+  "attack_type_col": "attack_type",
+  "label_distribution": {
+    "0": 2218764,
+    "1": 321283
+  },
+  "top_attack_types": {
+    "Benign": 2218764,
+    "Generic": 215481,
+    "Exploits": 44525,
+    " Fuzzers ": 19195,
+    "DoS": 16353,
+    " Reconnaissance ": 12228,
+    " Fuzzers": 5051,
+    "Analysis": 2677,
+    "Backdoor": 1795,
+    "Reconnaissance": 1759,
+    " Shellcode ": 1288,
+    "Backdoors": 534,
+    "Shellcode": 223,
+    "Worms": 174
+  },
+  "missing_ratio_top10": {
+    "is_ftp_login": 0.5629340716923742,
+    "ct_flw_http_mthd": 0.530755926957257,
+    "dstip": 0.0,
+    "sport": 0.0,
+    "proto": 0.0,
+    "state": 0.0,
+    "dur": 0.0,
+    "dsport": 0.0,
+    "dbytes": 0.0,
+    "sttl": 0.0
+  }
+}

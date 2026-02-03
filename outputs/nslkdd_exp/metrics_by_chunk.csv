@@ -1,0 +1,5 @@
+chunk,drift,drift_info,retrained,last_retrain_chunk,accuracy_baseline,precision_attack_baseline,recall_attack_baseline,f1_attack_baseline,roc_auc_baseline,pr_auc_baseline,tn_baseline,fp_baseline,fn_baseline,tp_baseline,accuracy_mitigated,precision_attack_mitigated,recall_attack_mitigated,f1_attack_mitigated,roc_auc_mitigated,pr_auc_mitigated,tn_mitigated,fp_mitigated,fn_mitigated,tp_mitigated
+2,True,"ks_ratio=0.487, drifted_features=19/39",True,1,1.0,1.0,1.0,1.0,1.0,1.0,6014,0,0,3533,1.0,1.0,1.0,1.0,1.0,1.0,6014,0,0,3533
+3,True,"ks_ratio=0.564, drifted_features=22/39",True,2,0.9998952550539436,0.9997620180866255,1.0,0.9998809948827799,0.9999999109470399,0.9999998866887704,5345,1,0,4201,0.9998952550539436,0.9997620180866255,1.0,0.9998809948827799,0.9999629539686139,0.9999474842933396,5345,1,0,4201
+4,True,"ks_ratio=0.564, drifted_features=22/39",True,3,1.0,1.0,1.0,1.0,1.0,1.0,4678,0,0,4869,1.0,1.0,1.0,1.0,1.0,1.0,4678,0,0,4869
+5,True,"ks_ratio=0.564, drifted_features=22/39",True,4,1.0,1.0,1.0,1.0,1.0,1.0,4009,0,0,5538,1.0,1.0,1.0,1.0,1.0,1.0,4009,0,0,5538
