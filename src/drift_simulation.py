@@ -27,6 +27,8 @@ def make_drift_chunks(
 
     - Each chunk has approximately the same size.
     - `benign_frac` controls the benign share in early chunks.
+    - `new_start` controls **when** drift starts (1-based chunk index).
+      If 0, drift starts around the middle chunk.
     - `new_frac` is reinterpreted as a **drift strength** in [0, 1]:
       larger values make later chunks more attack-heavy (lower benign ratio).
 
@@ -45,6 +47,14 @@ def make_drift_chunks(
     total = len(df)
     chunk_size = max(1, total // n_chunks)
 
+    # Decide drift start chunk (1-based)
+    if new_start is None or new_start <= 0:
+        # "auto mid": start after the first half
+        start_chunk = max(1, (n_chunks // 2) + 1)
+    else:
+        start_chunk = new_start
+    start_chunk = max(1, min(n_chunks, start_chunk))
+
     def sample_df(d: pd.DataFrame, n: int) -> pd.DataFrame:
         if n <= 0:
             return d.iloc[:0]
@@ -54,11 +64,13 @@ def make_drift_chunks(
 
     chunks: list[Chunk] = []
     for i in range(1, n_chunks + 1):
-        # Normalised position in stream [0, 1]; 0 = first chunk, 1 = last.
-        if n_chunks > 1:
-            t = (i - 1) / (n_chunks - 1)
-        else:
+        # Normalised position in drift window [0, 1].
+        # Before start_chunk => no drift (t = 0).
+        if i < start_chunk:
             t = 0.0
+        else:
+            denom = max(1, n_chunks - start_chunk)
+            t = (i - start_chunk) / denom
 
         # Benign fraction decreases over time depending on drift strength.
         drift_strength = max(0.0, min(1.0, new_frac))
@@ -87,10 +99,12 @@ def make_drift_chunks(
     meta = {
         "n_chunks": n_chunks,
         "chunk_size_approx": chunk_size,
+        "drift_start_chunk": start_chunk,
         "benign_frac_start": benign_frac,
         "benign_frac_end": max(
             0.0,
-            benign_frac * (1.0 - max(0.0, min(1.0, new_frac))),
+            benign_frac
+            * (1.0 - (max(0.0, min(1.0, new_frac)) if start_chunk < n_chunks else 0.0)),
         ),
         "drift_strength": max(0.0, min(1.0, new_frac)),
     }

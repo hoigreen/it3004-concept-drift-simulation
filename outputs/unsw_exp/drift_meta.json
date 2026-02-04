@@ -1,6 +1,7 @@
 {
   "n_chunks": 5,
   "chunk_size_approx": 508009,
+  "drift_start_chunk": 3,
   "benign_frac_start": 0.7,
   "benign_frac_end": 0.42,
   "drift_strength": 0.4
