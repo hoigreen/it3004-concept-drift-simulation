@@ -8,7 +8,6 @@
     "1": 59868
   },
   "top_attack_types": {
-    "Benign": 240132,
     "DDoS attacks-LOIC-HTTP": 25879,
     "DDOS attack-HOIC": 8929,
     "DoS attacks-Hulk": 6542,

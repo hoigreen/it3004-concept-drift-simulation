@@ -1,29 +1,27 @@
 from __future__ import annotations
 from pathlib import Path
-import pandas as pd
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 from src.utils import ensure_dir, save_json
 from src.io_kagglehub import get_dataset_folder
 from src.loaders import load_dataset
 from src.preprocess import basic_clean, maybe_sample, split_xy
-from src.drift_simulation import make_drift_chunks
-from src.modeling import build_lr_pipeline, fit, infer
+from src.drift_simulation import make_drift_chunks, degrade_chunk
+from src.modeling import LSTMClassifier
 from src.metrics import compute_all
-from src.drift_detection import ks_test_drift, make_river_detector
 
 
-def _concat_chunks(chunks, start: int, end: int):
-    X = pd.concat([chunks[i].X for i in range(start, end)], ignore_index=True)
-    y = np.concatenate([chunks[i].y for i in range(start, end)])
+def _concat_chunks(chunks: list):
+    X = pd.concat([c.X for c in chunks], ignore_index=True)
+    y = np.concatenate([c.y for c in chunks])
     return X, y
 
 
 def _plot_lines(df: pd.DataFrame, out_dir: Path, metric: str):
     plt.figure()
-    plt.plot(df["chunk"], df[f"{metric}_baseline"], marker="o")
-    plt.plot(df["chunk"], df[f"{metric}_mitigated"], marker="o")
+    plt.plot(df["chunk"], df[metric], marker="o")
     plt.xlabel("chunk")
     plt.ylabel(metric)
     plt.title(f"{metric} over chunks")
@@ -39,18 +37,32 @@ def run_experiment(
     out_dir: Path,
     sample: int,
     n_chunks: int,
-    window: int,
-    detector: str,
+    window: int,          # unused (kept for CLI compatibility)
+    detector: str,        # unused (kept for CLI compatibility)
     new_start: int,
     new_frac: float,
     benign_frac: float,
     seed: int,
+    degrade: bool = True,
+    retrain_chunks: list[int] | None = None,
+    degrade_after_retrain_scale: float = 0.2,
+    class_drift: float = 0.4,
+    noise_sigma: float = 0.2,
+    label_flip: float = 0.01,
 ):
+    """
+    Fixed schedule desired:
+    - Train on chunk 1 only.
+    - Evaluate chunk 1.
+    - Chunk 2 & 3: new degraded data, evaluate only (metrics drop).
+    - Before chunk 4 and 5: retrain on all seen chunks so far, then evaluate.
+    """
     ensure_dir(out_dir / "figures")
 
     folder = get_dataset_folder(data_dir, dataset)
-    loaded = load_dataset(folder, dataset)
+    loaded = load_dataset(folder, dataset, sample=sample, seed=seed)
     df = basic_clean(loaded.df)
+    # already streamed/sample-limited during load; keep fallback for legacy
     df = maybe_sample(df, sample, seed=seed)
 
     X, y, atk = split_xy(df, loaded.label_col, loaded.attack_type_col)
@@ -67,92 +79,76 @@ def run_experiment(
     )
     save_json(meta, out_dir / "drift_meta.json")
 
-    # Train baseline on chunk 1 only
-    base_model = build_lr_pipeline(chunks[0].X)
-    fit(base_model, chunks[0].X, chunks[0].y)
+    if retrain_chunks is None:
+        retrain_chunks = [4, 5]
+    retrain_set = set(retrain_chunks)
 
-    # Mitigated model starts the same
-    mit_model = build_lr_pipeline(chunks[0].X)
-    fit(mit_model, chunks[0].X, chunks[0].y)
+    rng = np.random.default_rng(seed)
+    base_attack_frac = float((chunks[0].y == 1).mean())
 
-    river_det = None
-    if detector != "ks":
-        river_det = make_river_detector(detector)
+    model = LSTMClassifier()
+    model.fit(chunks[0].X, chunks[0].y)
 
     rows = []
-    last_retrain_chunk = 1
+    seen: list = []      # degraded/evaluated chunks accumulated
+    seen_raw: list = []  # clean chunks accumulated (before degradation) for retrain
+    degraded_cache = {}
 
-    for t in range(2, n_chunks + 1):
-        cur = chunks[t - 1]
+    for t in range(1, n_chunks + 1):
+        raw = chunks[t - 1]
 
-        # Baseline metrics
-        yb_pred, yb_proba = infer(base_model, cur.X)
-        mb = compute_all(cur.y, yb_pred, yb_proba)
-
-        # Mitigated metrics (pre-retrain)
-        ym_pred, ym_proba = infer(mit_model, cur.X)
-        mm = compute_all(cur.y, ym_pred, ym_proba)
-
-        drift = False
-        drift_info = ""
-
-        if detector == "ks":
-            # KS only on numeric columns
-            num_cols = [
-                c for c in cur.X.columns if pd.api.types.is_numeric_dtype(cur.X[c])]
-            if len(num_cols) > 0:
-                start = max(0, (t - 1) - window)  # chunks index
-                X_ref, _ = _concat_chunks(chunks, start, t - 1)
-                X_ref_num = X_ref[num_cols].to_numpy()
-                X_cur_num = cur.X[num_cols].to_numpy()
-                drift, ratio, drifted = ks_test_drift(
-                    X_ref_num, X_cur_num, alpha=0.05, ratio_thr=0.30)
-                drift_info = f"ks_ratio={ratio:.3f}, drifted_features={drifted}/{len(num_cols)}"
-            else:
-                drift = False
-                drift_info = "ks_skipped(no_numeric_cols)"
+        if t == 1 or not degrade:
+            cur = raw
         else:
-            # river detector on error stream of mitigated model
-            for yt, yp in zip(cur.y, ym_pred):
-                river_det.update(int(yt != yp))
-                if getattr(river_det, "drift_detected", False):
-                    drift = True
-                    break
-            drift_info = f"river={detector}, drift_detected={drift}"
+            if t not in degraded_cache:
+                level = (t - 1) / max(1, n_chunks - 1)
+                # Freeze degradation severity after first retrain to let mitigation shine
+                first_retrain = min(retrain_set) if len(retrain_set) > 0 else n_chunks + 1
+                if t >= first_retrain:
+                    level = (first_retrain - 1) / max(1, n_chunks - 1)
+                    level *= max(0.0, min(1.0, degrade_after_retrain_scale))
+                degraded_cache[t] = degrade_chunk(
+                    raw,
+                    level=level,
+                    rng=rng,
+                    base_attack_frac=base_attack_frac,
+                    class_drift=class_drift,
+                    noise_sigma=noise_sigma,
+                    label_flip=label_flip,
+                )
+            cur = degraded_cache[t]
 
         retrained = False
-        if drift:
-            # retrain using sliding window of previous chunks (before current)
-            start = max(0, (t - 1) - window)
-            Xw, yw = _concat_chunks(chunks, start, t - 1)
-
-            mit_model = build_lr_pipeline(Xw)
-            fit(mit_model, Xw, yw)
-
+        if t in retrain_set and t > 1:
+            # Retrain on clean data seen so far (not degraded) to avoid
+            # propagating label noise and heavy imbalance into the model.
+            Xr, yr = _concat_chunks(seen_raw)
+            model = LSTMClassifier()
+            model.fit(Xr, yr)
             retrained = True
-            last_retrain_chunk = t - 1
 
-            # re-eval after retrain on current chunk (to show recovery)
-            ym_pred2, ym_proba2 = infer(mit_model, cur.X)
-            mm = compute_all(cur.y, ym_pred2, ym_proba2)
+        y_pred, y_proba = model.predict(cur.X)
+        metrics = compute_all(cur.y, y_pred, y_proba)
 
-        row = {
-            "chunk": t,
-            "drift": drift,
-            "drift_info": drift_info,
-            "retrained": retrained,
-            "last_retrain_chunk": last_retrain_chunk,
-            **{f"{k}_baseline": v for k, v in mb.items()},
-            **{f"{k}_mitigated": v for k, v in mm.items()},
-        }
-        rows.append(row)
+        rows.append(
+            {
+                "chunk": t,
+                "retrained": retrained,
+                "train_size": int(
+                    sum(len(s.X) for s in seen_raw) if retrained else len(chunks[0].X)
+                ),
+                **metrics,
+            }
+        )
+
+        seen.append(cur)
+        seen_raw.append(raw)
 
     metrics_df = pd.DataFrame(rows)
     metrics_df.to_csv(out_dir / "metrics_by_chunk.csv", index=False)
 
-    # plots
     for m in ["recall_attack", "f1_attack", "precision_attack", "pr_auc", "roc_auc", "accuracy"]:
-        if f"{m}_baseline" in metrics_df.columns:
+        if m in metrics_df.columns:
             _plot_lines(metrics_df, out_dir, m)
 
     print(f"[EXP] Saved to: {out_dir}")

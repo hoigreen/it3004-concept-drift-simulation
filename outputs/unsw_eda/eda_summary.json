@@ -8,7 +8,6 @@
     "1": 321283
   },
   "top_attack_types": {
-    "Benign": 2218764,
     "Generic": 215481,
     "Exploits": 44525,
     " Fuzzers ": 19195,

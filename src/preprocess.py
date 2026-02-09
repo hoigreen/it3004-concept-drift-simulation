@@ -30,6 +30,24 @@ def split_xy(df: pd.DataFrame, label_col: str, attack_type_col: str):
     # Work on a copy for feature processing
     X = df.drop(columns=[label_col]).copy()
 
+    # Drop ultra high-cardinality categoricals (e.g., IP addresses) to keep
+    # one-hot encoders and dense tensors memory-safe on modest RAM.
+    max_card = 5000
+    drop_cols = []
+    for c in X.columns:
+        if c == attack_type_col:
+            continue
+        if not pd.api.types.is_numeric_dtype(X[c]):
+            try:
+                nunique = X[c].nunique(dropna=False)
+                if nunique > max_card:
+                    drop_cols.append(c)
+            except Exception:
+                continue
+    if drop_cols:
+        X = X.drop(columns=drop_cols)
+        print(f"[preprocess] Dropped high-cardinality columns: {drop_cols}")
+
     # Ensure attack_type column exists and is string-typed, both in X and
     # in the separate attack_type array used for drift simulation.
     if attack_type_col in X.columns:

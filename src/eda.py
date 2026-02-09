@@ -14,18 +14,22 @@ def run_eda(dataset: str, data_dir: Path, out_dir: Path, sample: int = 0):
     ensure_dir(out_dir / "figures")
 
     folder = get_dataset_folder(data_dir, dataset)
-    loaded = load_dataset(folder, dataset)
+    loaded = load_dataset(folder, dataset, sample=sample, seed=42)
     df = basic_clean(loaded.df)
+    # already sampled during load; keep maybe_sample as safety for legacy
     df = maybe_sample(df, sample, seed=42)
 
     # Basic stats
+    atk_series = df[loaded.attack_type_col].astype(str)
+    atk_filtered = atk_series[~atk_series.str.lower().isin(["benign", "normal"])]
+
     info = {
         "rows": int(len(df)),
         "cols": int(df.shape[1]),
         "label_col": loaded.label_col,
         "attack_type_col": loaded.attack_type_col,
         "label_distribution": df[loaded.label_col].value_counts(dropna=False).to_dict(),
-        "top_attack_types": df[loaded.attack_type_col].astype(str).value_counts().head(15).to_dict(),
+        "top_attack_types": atk_filtered.value_counts().head(15).to_dict(),
         "missing_ratio_top10": (df.isna().mean().sort_values(ascending=False).head(10)).to_dict(),
     }
     save_json(info, out_dir / "eda_summary.json")
@@ -40,11 +44,10 @@ def run_eda(dataset: str, data_dir: Path, out_dir: Path, sample: int = 0):
     plt.savefig(out_dir / "figures" / "label_distribution.png")
     plt.close()
 
-    # Attack type distribution (top 15)
+    # Attack type distribution (top 15, excluding benign/normal)
     plt.figure()
-    df[loaded.attack_type_col].astype(
-        str).value_counts().head(15).plot(kind="bar")
-    plt.title(f"{dataset} - top 15 attack types")
+    atk_filtered.value_counts().head(15).plot(kind="bar")
+    plt.title(f"{dataset} - top 15 attack types (no benign/normal)")
     plt.xlabel("attack type")
     plt.ylabel("count")
     plt.xticks(rotation=45, ha="right")

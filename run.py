@@ -28,6 +28,17 @@ def main():
     exp.add_argument("--window", type=int, default=2)
     exp.add_argument(
         "--detector", choices=["ks", "adwin", "ddm", "eddm"], default="ks")
+    exp.add_argument("--degrade_scale", type=float, default=0.2,
+                     help="Scale degradation severity after first retrain (0=no extra drift)")
+    exp.add_argument("--class_drift", type=float, default=0.4,
+                     help="Rate at which attack fraction decays with drift")
+    exp.add_argument("--noise_sigma", type=float, default=0.2,
+                     help="Gaussian noise std applied to numeric features at max drift")
+    exp.add_argument("--label_flip", type=float, default=0.01,
+                     help="Max fraction of labels flipped at peak drift")
+
+    exp.add_argument("--no-degrade", action="store_true",
+                     help="Disable synthetic degradation (drift/imbalance/noise)")
 
     # drift knobs
     exp.add_argument("--new_start", type=int, default=0,
@@ -57,6 +68,11 @@ def main():
             new_frac=args.new_frac,
             benign_frac=args.benign_frac,
             seed=args.seed,
+            degrade=not args.no_degrade,
+            degrade_after_retrain_scale=args.degrade_scale,
+            class_drift=args.class_drift,
+            noise_sigma=args.noise_sigma,
+            label_flip=args.label_flip,
         )
 
 

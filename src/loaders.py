@@ -1,7 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+import numpy as np
 import pandas as pd
+
+try:
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - optional dependency guard
+    pq = None
 
 
 @dataclass
@@ -18,6 +24,61 @@ def _largest_csv(folder: Path) -> Path:
     return sorted(csvs, key=lambda p: p.stat().st_size, reverse=True)[0]
 
 
+def _downsample_concat(buf: pd.DataFrame | None, chunk: pd.DataFrame, sample: int, rng: np.random.Generator):
+    """Concatenate chunk into buf and downsample to at most `sample` rows."""
+    if buf is None:
+        buf = chunk
+    else:
+        buf = pd.concat([buf, chunk], ignore_index=True)
+
+    if sample and sample > 0 and len(buf) > sample:
+        idx = rng.choice(len(buf), size=sample, replace=False)
+        buf = buf.iloc[idx].reset_index(drop=True)
+    return buf
+
+
+def _reservoir_csv(
+    files: list[Path],
+    sample: int,
+    seed: int,
+    read_kwargs: dict,
+    chunk_size: int = 100_000,
+):
+    """Streaming reservoir sampler over one or many CSV files."""
+
+    rng = np.random.default_rng(seed)
+    if not sample or sample <= 0:
+        dfs = [pd.read_csv(p, **read_kwargs) for p in files]
+        return pd.concat(dfs, ignore_index=True)
+
+    buf: pd.DataFrame | None = None
+    for p in files:
+        for chunk in pd.read_csv(p, chunksize=chunk_size, **read_kwargs):
+            buf = _downsample_concat(buf, chunk, sample, rng)
+    return buf if buf is not None else pd.DataFrame()
+
+
+def _reservoir_parquet(files: list[Path], sample: int, seed: int):
+    """Reservoir sample Parquet files by iterating row groups (memory-safe)."""
+
+    if pq is None:
+        raise ImportError("pyarrow is required to read Parquet files.")
+
+    rng = np.random.default_rng(seed)
+    if not sample or sample <= 0:
+        dfs = [pd.read_parquet(p) for p in files]
+        return pd.concat(dfs, ignore_index=True)
+
+    buf: pd.DataFrame | None = None
+    for p in files:
+        pf = pq.ParquetFile(p)
+        for rg in range(pf.num_row_groups):
+            tbl = pf.read_row_group(rg)
+            chunk = tbl.to_pandas()
+            buf = _downsample_concat(buf, chunk, sample, rng)
+    return buf if buf is not None else pd.DataFrame()
+
+
 def _find_first_by_name_ci(folder: Path, names: list[str]) -> Path | None:
     """
     Find the first file in folder (recursive) whose name matches one of `names`,
@@ -31,7 +92,7 @@ def _find_first_by_name_ci(folder: Path, names: list[str]) -> Path | None:
     return None
 
 
-def load_nslkdd(folder: Path) -> Loaded:
+def load_nslkdd(folder: Path, sample: int = 0, seed: int = 42) -> Loaded:
     # search recursively to be robust in kagglehub cache layout and filename case
     train = _find_first_by_name_ci(
         folder, ["KDDTrain+.TXT", "KDDTrain+_20Percent.TXT", "KDDTrain+.txt", "KDDTrain+_20Percent.txt"]
@@ -50,11 +111,15 @@ def load_nslkdd(folder: Path) -> Loaded:
     df_test = pd.read_csv(test, header=None, names=cols)
     df = pd.concat([df_train, df_test], ignore_index=True)
 
+    # Optional downsample for quick runs
+    if sample and sample > 0 and len(df) > sample:
+        df = df.sample(n=sample, random_state=seed).reset_index(drop=True)
+
     df["label"] = (df["attack_type"] != "normal").astype(int)
     return Loaded(df=df, label_col="label", attack_type_col="attack_type")
 
 
-def load_unsw(folder: Path) -> Loaded:
+def load_unsw(folder: Path, sample: int = 0, seed: int = 42) -> Loaded:
     """
     Load UNSW-NB15.
 
@@ -91,22 +156,21 @@ def load_unsw(folder: Path) -> Loaded:
             if not data_files:
                 raise FileNotFoundError("UNSW: no UNSW-NB15_*.csv files found.")
 
-            dfs = []
-            for p in data_files:
-                dfs.append(
-                    pd.read_csv(
-                        p,
-                        header=None,
-                        names=col_names,
-                        low_memory=False,
-                    )
-                )
-            df = pd.concat(dfs, ignore_index=True)
+            df = _reservoir_csv(
+                data_files,
+                sample=sample,
+                seed=seed,
+                read_kwargs={
+                    "header": None,
+                    "names": col_names,
+                    "low_memory": False,
+                },
+            )
 
     # Fallback if we could not build from feature description for any reason.
     if df is None:
         p = _largest_csv(folder)
-        df = pd.read_csv(p, low_memory=False)
+        df = _reservoir_csv([p], sample=sample, seed=seed, read_kwargs={"low_memory": False})
 
     # case-insensitive mapping
     lower = {c.lower(): c for c in df.columns}
@@ -133,7 +197,7 @@ def load_unsw(folder: Path) -> Loaded:
     return Loaded(df=df, label_col=label_c, attack_type_col=atk_c)
 
 
-def load_cicids2018(folder: Path) -> Loaded:
+def load_cicids2018(folder: Path, sample: int = 0, seed: int = 42) -> Loaded:
     """
     Load CSE-CIC-IDS2018.
 
@@ -149,26 +213,28 @@ def load_cicids2018(folder: Path) -> Loaded:
     if not csvs and not pars:
         raise FileNotFoundError("CIC-IDS2018: no CSV or Parquet files found.")
 
-    dfs: list[pd.DataFrame] = []
+    buf: pd.DataFrame | None = None
 
     # CSVs (if any)
-    for p in csvs:
+    if csvs:
         try:
-            dfs.append(pd.read_csv(p, low_memory=False))
+            df_csv = _reservoir_csv(csvs, sample=sample, seed=seed, read_kwargs={"low_memory": False})
+            buf = _downsample_concat(buf, df_csv, sample, np.random.default_rng(seed))
         except Exception:
-            continue
+            pass
 
     # Parquet files (current Kaggle format)
-    for p in pars:
+    if pars:
         try:
-            dfs.append(pd.read_parquet(p))
+            df_par = _reservoir_parquet(pars, sample=sample, seed=seed)
+            buf = _downsample_concat(buf, df_par, sample, np.random.default_rng(seed + 1))
         except Exception:
-            continue
+            pass
 
-    if not dfs:
+    if buf is None or buf.empty:
         raise ValueError("CIC-IDS2018: cannot read any CSV/Parquet files.")
 
-    df = pd.concat(dfs, ignore_index=True)
+    df = buf
 
     # Label column typically 'Label'
     if "Label" not in df.columns:
@@ -182,11 +248,11 @@ def load_cicids2018(folder: Path) -> Loaded:
     return Loaded(df=df, label_col="label", attack_type_col="attack_type")
 
 
-def load_dataset(folder: Path, dataset: str) -> Loaded:
+def load_dataset(folder: Path, dataset: str, sample: int = 0, seed: int = 42) -> Loaded:
     if dataset == "nslkdd":
-        return load_nslkdd(folder)
+        return load_nslkdd(folder, sample=sample, seed=seed)
     if dataset == "unsw":
-        return load_unsw(folder)
+        return load_unsw(folder, sample=sample, seed=seed)
     if dataset == "cicids2018":
-        return load_cicids2018(folder)
+        return load_cicids2018(folder, sample=sample, seed=seed)
     raise ValueError("Unknown dataset")

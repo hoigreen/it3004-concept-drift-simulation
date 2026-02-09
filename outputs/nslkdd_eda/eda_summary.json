@@ -8,7 +8,6 @@
     "0": 23160
   },
   "top_attack_types": {
-    "normal": 23160,
     "neptune": 12939,
     "satan": 1426,
     "guess_passwd": 1241,
@@ -22,7 +21,8 @@
     "back": 555,
     "nmap": 374,
     "snmpguess": 331,
-    "saint": 319
+    "saint": 319,
+    "mailbomb": 293
   },
   "missing_ratio_top10": {
     "f1": 0.0,

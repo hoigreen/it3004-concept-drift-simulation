@@ -109,3 +109,75 @@ def make_drift_chunks(
         "drift_strength": max(0.0, min(1.0, new_frac)),
     }
     return chunks, meta
+
+
+# ---------------------------------------------------------------------------
+# Additional degradation helpers (class imbalance, noise, label flips)
+# ---------------------------------------------------------------------------
+
+
+def degrade_chunk(
+    chunk: Chunk,
+    level: float,
+    rng: np.random.Generator,
+    base_attack_frac: float,
+    class_drift: float = 0.5,
+    noise_sigma: float = 0.5,
+    label_flip: float = 0.02,
+):
+    """
+    Return a *new* Chunk with progressive degradation applied.
+
+    Args:
+        level: in [0,1], controls severity; increases with later chunks.
+        base_attack_frac: baseline attack share in the (test) set; we shrink it
+            over time to simulate growing benign dominance.
+        class_drift: scaling for how fast attack fraction decays.
+        noise_sigma: std of Gaussian noise injected into numeric columns.
+        label_flip: fraction of labels flipped (scaled by level).
+    """
+
+    X = chunk.X.copy()
+    y = chunk.y.copy()
+
+    # ----- class imbalance -----
+    attack_frac_t = max(0.01, base_attack_frac * (1.0 - class_drift * level))
+
+    idx_attack = np.where(y == 1)[0]
+    idx_benign = np.where(y == 0)[0]
+    n_total = len(y)
+    n_attack = max(1, int(n_total * attack_frac_t))
+    n_benign = max(1, n_total - n_attack)
+
+    def _sample(idxs, n):
+        if len(idxs) == 0:
+            return np.array([], dtype=int)
+        replace = len(idxs) < n
+        return rng.choice(idxs, size=n, replace=replace)
+
+    sel_idx = np.concatenate([
+        _sample(idx_attack, n_attack),
+        _sample(idx_benign, n_benign)
+    ])
+    rng.shuffle(sel_idx)
+    X = X.iloc[sel_idx].reset_index(drop=True)
+    y = y[sel_idx]
+
+    # ----- feature noise / concept drift -----
+    num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c])]
+    if num_cols:
+        scale = noise_sigma * level
+        noise = rng.normal(loc=0.0, scale=scale, size=(len(X), len(num_cols)))
+        X[num_cols] = X[num_cols].to_numpy() + noise
+
+        # simple concept drift: shift first numeric feature mean over time
+        drift_col = num_cols[0]
+        X[drift_col] = X[drift_col] + level
+
+    # ----- label noise -----
+    flip_rate = label_flip * level
+    if flip_rate > 0:
+        mask = rng.random(len(y)) < flip_rate
+        y[mask] = 1 - y[mask]
+
+    return Chunk(X=X, y=y, attack_type=np.array(chunk.attack_type)[sel_idx])
